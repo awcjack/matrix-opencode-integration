@@ -1,0 +1,21 @@
+version: '3.8'
+
+services:
+  matrix-opencode:
+    build: .
+    restart: unless-stopped
+    environment:
+      - MATRIX_HOMESERVER=${MATRIX_HOMESERVER}
+      - MATRIX_USER_ID=${MATRIX_USER_ID}
+      - MATRIX_ACCESS_TOKEN=${MATRIX_ACCESS_TOKEN}
+      - MATRIX_DEVICE_ID=${MATRIX_DEVICE_ID:-}
+      - OPENCODE_SERVER_URL=${OPENCODE_SERVER_URL}
+      - OPENCODE_USERNAME=${OPENCODE_USERNAME:-opencode}
+      - OPENCODE_PASSWORD=${OPENCODE_PASSWORD:-}
+      - MATRIX_WHITELIST=${MATRIX_WHITELIST}
+      - OPENCODE_DEFAULT_PROVIDER=${OPENCODE_DEFAULT_PROVIDER:-}
+      - OPENCODE_DEFAULT_AGENT=${OPENCODE_DEFAULT_AGENT:-}
+    # Uncomment to use config file instead of environment variables
+    # volumes:
+    #   - ./config.json:/app/config.json:ro
+    # command: ["-config", "/app/config.json"]
