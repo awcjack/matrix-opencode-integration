@@ -21,6 +21,7 @@ type MatrixClient interface {
 	EditMessage(ctx context.Context, roomID, eventID, newContent string, isLive bool) error
 	SendReply(ctx context.Context, roomID, threadID, replyTo, message string, isNotice bool) (string, error)
 	SetTyping(ctx context.Context, roomID string, typing bool, timeoutMS int) error
+	JoinRoom(ctx context.Context, roomID string) error
 	GetBotUserID() string
 }
 
@@ -152,8 +153,11 @@ func (h *Handler) handleMemberEvent(ctx context.Context, event *appservice.Event
 	// Auto-join rooms we're invited to
 	if membership == "invite" && stateKey == h.client.GetBotUserID() {
 		log.Printf("Invited to room %s by %s, auto-joining...", event.RoomID, event.Sender)
-		// Note: In AS mode, we don't need to explicitly join
-		// The homeserver handles this for us
+		if err := h.client.JoinRoom(ctx, event.RoomID); err != nil {
+			log.Printf("Failed to join room %s: %v", event.RoomID, err)
+		} else {
+			log.Printf("Successfully joined room %s", event.RoomID)
+		}
 	}
 }
 

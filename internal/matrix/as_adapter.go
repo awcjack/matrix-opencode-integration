@@ -53,6 +53,12 @@ func (a *ASClientAdapter) SetTyping(ctx context.Context, roomID string, typing b
 	return a.client.SetTyping(ctx, roomID, typing, timeoutMS)
 }
 
+// JoinRoom joins a room by ID
+func (a *ASClientAdapter) JoinRoom(ctx context.Context, roomID string) error {
+	_, err := a.client.JoinRoom(ctx, roomID)
+	return err
+}
+
 // GetBotUserID returns the bot's user ID
 func (a *ASClientAdapter) GetBotUserID() string {
 	return a.client.GetBotUserID()

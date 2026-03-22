@@ -115,6 +115,12 @@ func (a *BotClientAdapter) SetTyping(ctx context.Context, roomID string, typing 
 	return err
 }
 
+// JoinRoom joins a room by ID
+func (a *BotClientAdapter) JoinRoom(ctx context.Context, roomID string) error {
+	_, err := a.client.JoinRoomByID(ctx, id.RoomID(roomID))
+	return err
+}
+
 // GetBotUserID returns the bot's user ID
 func (a *BotClientAdapter) GetBotUserID() string {
 	return string(a.client.UserID)
