@@ -48,11 +48,7 @@ func (c *Client) doRequest(ctx context.Context, method, path string, query url.V
 
 	// Build URL with query parameters
 	reqURL := c.homeserverURL + path
-	if query == nil {
-		query = url.Values{}
-	}
-	query.Set("access_token", c.asToken)
-	if len(query) > 0 {
+	if query != nil && len(query) > 0 {
 		reqURL += "?" + query.Encode()
 	}
 
