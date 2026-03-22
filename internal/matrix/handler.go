@@ -77,6 +77,8 @@ func (h *Handler) StartEventLoop(ctx context.Context) error {
 
 // HandleEvent processes a Matrix event (from either AS or bot mode)
 func (h *Handler) HandleEvent(ctx context.Context, event *appservice.Event) {
+	log.Printf("HandleEvent: type=%s sender=%s room=%s", event.Type, event.Sender, event.RoomID)
+
 	// Only handle m.room.message events
 	if event.Type != "m.room.message" {
 		// Handle invites
@@ -88,6 +90,7 @@ func (h *Handler) HandleEvent(ctx context.Context, event *appservice.Event) {
 
 	// Ignore events from before handler started
 	if event.OriginServerTS < h.startTime.UnixMilli() {
+		log.Printf("Ignoring old event (ts=%d < start=%d): %s", event.OriginServerTS, h.startTime.UnixMilli(), event.EventID)
 		return
 	}
 
