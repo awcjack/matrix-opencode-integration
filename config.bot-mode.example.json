@@ -1,0 +1,24 @@
+{
+  "_comment": "Bot mode config - for use with public homeservers like matrix.org",
+  "mode": "bot",
+
+  "matrix": {
+    "homeserver": "https://matrix.org",
+    "user_id": "@opencode-bot:matrix.org",
+    "access_token": "YOUR_ACCESS_TOKEN_HERE",
+    "device_id": "OPENCODE_BOT"
+  },
+
+  "opencode": {
+    "server_url": "http://localhost:4096",
+    "username": "opencode",
+    "password": ""
+  },
+
+  "whitelist": [
+    "@your-user:matrix.org"
+  ],
+
+  "default_provider": "",
+  "default_agent": ""
+}

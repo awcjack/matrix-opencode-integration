@@ -1,0 +1,38 @@
+{
+  "_comment": "Mode: 'appservice' (default, requires HS admin) or 'bot' (fallback, polling-based)",
+  "mode": "appservice",
+
+  "matrix": {
+    "homeserver": "https://matrix.example.com",
+    "user_id": "@opencode-bot:example.com",
+    "_comment_access_token": "Only needed in bot mode",
+    "access_token": "",
+    "device_id": ""
+  },
+
+  "appservice": {
+    "_comment": "Application Service configuration (only used when mode=appservice)",
+    "id": "opencode-bridge",
+    "registration_path": "/path/to/registration.yaml",
+    "listen_address": ":8080",
+    "public_url": "http://localhost:8080",
+    "sender_localpart": "opencode-bot",
+    "homeserver_domain": "example.com",
+    "_comment_tokens": "hs_token and as_token are loaded from registration file, or can be set directly:",
+    "hs_token": "",
+    "as_token": ""
+  },
+
+  "opencode": {
+    "server_url": "http://localhost:4096",
+    "username": "opencode",
+    "password": ""
+  },
+
+  "whitelist": [
+    "@your-user:example.com"
+  ],
+
+  "default_provider": "",
+  "default_agent": ""
+}
