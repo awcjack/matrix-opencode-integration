@@ -129,6 +129,7 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 
 // handleTransaction receives events from the homeserver
 func (s *Server) handleTransaction(w http.ResponseWriter, r *http.Request) {
+	log.Printf("Received transaction request: %s %s", r.Method, r.URL.Path)
 	txnID := r.PathValue("txnId")
 	if txnID == "" {
 		// Try legacy path parsing
@@ -151,9 +152,12 @@ func (s *Server) handleTransaction(w http.ResponseWriter, r *http.Request) {
 
 	var txn Transaction
 	if err := json.NewDecoder(r.Body).Decode(&txn); err != nil {
+		log.Printf("Failed to decode transaction: %v", err)
 		s.sendError(w, http.StatusBadRequest, "M_BAD_JSON", "Invalid JSON")
 		return
 	}
+
+	log.Printf("Transaction %s contains %d events", txnID, len(txn.Events))
 
 	// Process events
 	ctx := r.Context()
