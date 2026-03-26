@@ -99,6 +99,9 @@ type StreamEvent struct {
 // StreamCallback is called for each chunk of streamed response
 type StreamCallback func(text string)
 
+// CompletionCallback is called when a message streaming is complete
+type CompletionCallback func(sessionID string)
+
 // doRequest performs an authenticated HTTP request
 func (c *Client) doRequest(ctx context.Context, method, path string, body interface{}) (*http.Response, error) {
 	var bodyReader io.Reader
@@ -397,9 +400,10 @@ func (c *Client) GetAgents(ctx context.Context) ([]Agent, error) {
 
 // StreamingClient provides streaming message handling
 type StreamingClient struct {
-	client    *Client
-	mu        sync.Mutex
-	callbacks map[string]StreamCallback // sessionID -> callback
+	client             *Client
+	mu                 sync.Mutex
+	callbacks          map[string]StreamCallback    // sessionID -> callback
+	completionCallback CompletionCallback           // global completion callback
 }
 
 // NewStreamingClient creates a streaming client
@@ -408,6 +412,13 @@ func NewStreamingClient(client *Client) *StreamingClient {
 		client:    client,
 		callbacks: make(map[string]StreamCallback),
 	}
+}
+
+// SetCompletionCallback sets the callback for message completion events
+func (sc *StreamingClient) SetCompletionCallback(callback CompletionCallback) {
+	sc.mu.Lock()
+	defer sc.mu.Unlock()
+	sc.completionCallback = callback
 }
 
 // RegisterCallback registers a callback for a session's streaming response
@@ -450,26 +461,75 @@ func (sc *StreamingClient) StartEventLoop(ctx context.Context) error {
 
 // processEvent handles incoming SSE events
 func (sc *StreamingClient) processEvent(event StreamEvent) {
-	// Parse the event data to extract session ID and text content
-	// The exact format depends on OpenCode's SSE event structure
-	var data struct {
-		SessionID string `json:"sessionId"`
-		Type      string `json:"type"`
-		Text      string `json:"text"`
-		Delta     string `json:"delta"`
+	// Parse the event based on its type
+	// OpenCode sends events like "message-v2.updated", "message-v2.part.updated", "message-v2.part.delta"
+	var baseData struct {
+		Type       string          `json:"type"`
+		Properties json.RawMessage `json:"properties"`
 	}
 
-	if err := json.Unmarshal([]byte(event.Data), &data); err != nil {
+	if err := json.Unmarshal([]byte(event.Data), &baseData); err != nil {
 		return
 	}
 
-	if cb, ok := sc.getCallback(data.SessionID); ok {
-		text := data.Text
-		if text == "" {
-			text = data.Delta
+	switch baseData.Type {
+	case "message-v2.part.delta":
+		// Handle streaming text deltas
+		var props struct {
+			SessionID string `json:"sessionID"`
+			MessageID string `json:"messageID"`
+			PartID    string `json:"partID"`
+			Field     string `json:"field"`
+			Delta     string `json:"delta"`
 		}
-		if text != "" {
-			cb(text)
+		if err := json.Unmarshal(baseData.Properties, &props); err != nil {
+			return
+		}
+		if cb, ok := sc.getCallback(props.SessionID); ok && props.Delta != "" {
+			cb(props.Delta)
+		}
+
+	case "message-v2.updated":
+		// Check if this is a completion event (has completed timestamp)
+		var props struct {
+			SessionID string `json:"sessionID"`
+			Info      struct {
+				Role string `json:"role"`
+				Time struct {
+					Completed int64 `json:"completed,omitempty"`
+				} `json:"time"`
+			} `json:"info"`
+		}
+		if err := json.Unmarshal(baseData.Properties, &props); err != nil {
+			return
+		}
+		// If it's an assistant message with a completed timestamp, signal completion
+		if props.Info.Role == "assistant" && props.Info.Time.Completed > 0 {
+			sc.mu.Lock()
+			cb := sc.completionCallback
+			sc.mu.Unlock()
+			if cb != nil {
+				cb(props.SessionID)
+			}
+		}
+
+	case "message-v2.part.updated":
+		// Handle part updates - extract text content
+		var props struct {
+			SessionID string `json:"sessionID"`
+			Part      struct {
+				Type    string `json:"type"`
+				Content string `json:"content"`
+			} `json:"part"`
+		}
+		if err := json.Unmarshal(baseData.Properties, &props); err != nil {
+			return
+		}
+		// Only handle text parts
+		if props.Part.Type == "text" && props.Part.Content != "" {
+			if cb, ok := sc.getCallback(props.SessionID); ok {
+				cb(props.Part.Content)
+			}
 		}
 	}
 }
