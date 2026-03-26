@@ -58,7 +58,7 @@ func NewHandler(client MatrixClient, ocClient *opencode.Client, cfg *config.Conf
 	sessionMgr := session.NewManager(ocClient, cfg.DefaultProvider, cfg.DefaultAgent)
 	streamingClient := opencode.NewStreamingClient(ocClient)
 
-	return &Handler{
+	h := &Handler{
 		client:           client,
 		ocClient:         ocClient,
 		streamingClient:  streamingClient,
@@ -69,6 +69,23 @@ func NewHandler(client MatrixClient, ocClient *opencode.Client, cfg *config.Conf
 		pendingResponses: make(map[string]chan struct{}),
 		startTime:        time.Now(),
 	}
+
+	// Register completion callback to signal when streaming is done
+	streamingClient.SetCompletionCallback(func(sessionID string) {
+		h.streamingMu.Lock()
+		doneChan, exists := h.pendingResponses[sessionID]
+		h.streamingMu.Unlock()
+		if exists {
+			select {
+			case <-doneChan:
+				// Already closed
+			default:
+				close(doneChan)
+			}
+		}
+	})
+
+	return h
 }
 
 // StartEventLoop starts the OpenCode SSE event loop
