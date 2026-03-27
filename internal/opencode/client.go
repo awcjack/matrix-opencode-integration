@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 )
 
 // Client is the OpenCode API client
@@ -457,20 +458,73 @@ func (sc *StreamingClient) getCallback(sessionID string) (StreamCallback, bool) 
 	return cb, ok
 }
 
-// StartEventLoop starts processing events from the OpenCode server
+// StartEventLoop starts processing events from the OpenCode server with automatic reconnection
 func (sc *StreamingClient) StartEventLoop(ctx context.Context) error {
-	events, err := sc.client.StreamEvents(ctx)
-	if err != nil {
-		return err
-	}
+	// Start the reconnecting event loop in a goroutine
+	go sc.eventLoopWithReconnect(ctx)
+	return nil
+}
 
-	go func() {
+// eventLoopWithReconnect manages the SSE connection with automatic reconnection
+func (sc *StreamingClient) eventLoopWithReconnect(ctx context.Context) {
+	const (
+		initialBackoff = 1 * time.Second
+		maxBackoff     = 30 * time.Second
+		backoffFactor  = 2.0
+	)
+
+	backoff := initialBackoff
+	consecutiveFailures := 0
+
+	for {
+		select {
+		case <-ctx.Done():
+			log.Printf("SSE event loop: context cancelled, stopping reconnection attempts")
+			return
+		default:
+		}
+
+		log.Printf("SSE event loop: connecting to OpenCode server...")
+		events, err := sc.client.StreamEvents(ctx)
+		if err != nil {
+			consecutiveFailures++
+			log.Printf("SSE event loop: failed to connect (attempt %d): %v", consecutiveFailures, err)
+
+			// Wait before retrying with exponential backoff
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(backoff):
+			}
+
+			// Increase backoff for next attempt
+			backoff = time.Duration(float64(backoff) * backoffFactor)
+			if backoff > maxBackoff {
+				backoff = maxBackoff
+			}
+			continue
+		}
+
+		// Reset backoff on successful connection
+		backoff = initialBackoff
+		consecutiveFailures = 0
+		log.Printf("SSE event loop: connected successfully")
+
+		// Process events until channel closes (disconnect)
 		for event := range events {
 			sc.processEvent(event)
 		}
-	}()
 
-	return nil
+		// Channel closed - connection lost
+		log.Printf("SSE event loop: connection closed, will reconnect in %v", backoff)
+
+		// Brief delay before reconnecting
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(backoff):
+		}
+	}
 }
 
 // processEvent handles incoming SSE events
