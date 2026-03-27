@@ -331,7 +331,6 @@ func (c *Client) StreamEvents(ctx context.Context) (<-chan StreamEvent, error) {
 			if line == "" {
 				// End of event
 				if currentEvent.Event != "" || currentEvent.Data != "" {
-					log.Printf("SSE received event: %s (data length: %d)", currentEvent.Event, len(currentEvent.Data))
 					select {
 					case events <- currentEvent:
 					case <-ctx.Done():
@@ -411,14 +410,16 @@ type StreamingClient struct {
 	callbacks          map[string]StreamCallback // sessionID -> callback
 	completionCallback CompletionCallback        // global completion callback
 	lastContent        map[string]string         // sessionID -> last content sent (for dedup)
+	receivedDelta      map[string]bool           // sessionID -> whether we've received delta events
 }
 
 // NewStreamingClient creates a streaming client
 func NewStreamingClient(client *Client) *StreamingClient {
 	return &StreamingClient{
-		client:      client,
-		callbacks:   make(map[string]StreamCallback),
-		lastContent: make(map[string]string),
+		client:        client,
+		callbacks:     make(map[string]StreamCallback),
+		lastContent:   make(map[string]string),
+		receivedDelta: make(map[string]bool),
 	}
 }
 
@@ -442,6 +443,7 @@ func (sc *StreamingClient) UnregisterCallback(sessionID string) {
 	defer sc.mu.Unlock()
 	delete(sc.callbacks, sessionID)
 	delete(sc.lastContent, sessionID)
+	delete(sc.receivedDelta, sessionID)
 }
 
 // getCallback retrieves a callback for a session
@@ -478,11 +480,8 @@ func (sc *StreamingClient) processEvent(event StreamEvent) {
 	}
 
 	if err := json.Unmarshal([]byte(event.Data), &baseData); err != nil {
-		log.Printf("SSE processEvent: failed to parse event data: %v", err)
 		return
 	}
-
-	log.Printf("SSE processEvent: type=%s", baseData.Type)
 
 	switch baseData.Type {
 	case "message-v2.part.delta", "message.part.delta":
@@ -498,6 +497,10 @@ func (sc *StreamingClient) processEvent(event StreamEvent) {
 			return
 		}
 		if cb, ok := sc.getCallback(props.SessionID); ok && props.Delta != "" {
+			// Mark that we've received delta events for this session
+			sc.mu.Lock()
+			sc.receivedDelta[props.SessionID] = true
+			sc.mu.Unlock()
 			cb(props.Delta)
 		}
 
@@ -513,13 +516,10 @@ func (sc *StreamingClient) processEvent(event StreamEvent) {
 			} `json:"info"`
 		}
 		if err := json.Unmarshal(baseData.Properties, &props); err != nil {
-			log.Printf("SSE message.updated: failed to parse props: %v", err)
 			return
 		}
-		log.Printf("SSE message.updated: sessionID=%s role=%s completed=%d", props.SessionID, props.Info.Role, props.Info.Time.Completed)
 		// If it's an assistant message with a completed timestamp, signal completion
 		if props.Info.Role == "assistant" && props.Info.Time.Completed > 0 {
-			log.Printf("SSE completion signal for session %s", props.SessionID)
 			sc.mu.Lock()
 			cb := sc.completionCallback
 			sc.mu.Unlock()
@@ -530,6 +530,7 @@ func (sc *StreamingClient) processEvent(event StreamEvent) {
 
 	case "message-v2.part.updated", "message.part.updated":
 		// Handle part updates - extract text content
+		// Skip if we're receiving delta events (they provide the same content)
 		var props struct {
 			SessionID string `json:"sessionID"`
 			Part      struct {
@@ -541,6 +542,16 @@ func (sc *StreamingClient) processEvent(event StreamEvent) {
 		if err := json.Unmarshal(baseData.Properties, &props); err != nil {
 			return
 		}
+
+		// Check if we're receiving delta events for this session - if so, skip
+		// to avoid duplicate content
+		sc.mu.Lock()
+		hasDeltas := sc.receivedDelta[props.SessionID]
+		sc.mu.Unlock()
+		if hasDeltas {
+			return
+		}
+
 		// Only handle text parts - check both "text" and "content" fields
 		text := props.Part.Text
 		if text == "" {
