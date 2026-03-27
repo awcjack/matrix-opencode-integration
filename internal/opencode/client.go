@@ -405,21 +405,23 @@ func (c *Client) GetAgents(ctx context.Context) ([]Agent, error) {
 
 // StreamingClient provides streaming message handling
 type StreamingClient struct {
-	client             *Client
-	mu                 sync.Mutex
-	callbacks          map[string]StreamCallback // sessionID -> callback
-	completionCallback CompletionCallback        // global completion callback
-	lastContent        map[string]string         // sessionID -> last content sent (for dedup)
-	receivedDelta      map[string]bool           // sessionID -> whether we've received delta events
+	client              *Client
+	mu                  sync.Mutex
+	callbacks           map[string]StreamCallback // sessionID -> callback
+	completionCallback  CompletionCallback        // global completion callback
+	lastContent         map[string]string         // sessionID -> last content sent (for dedup)
+	receivedDelta       map[string]bool           // sessionID -> whether we've received delta events
+	assistantMessageIDs map[string]string         // sessionID -> current assistant messageID (to filter user messages)
 }
 
 // NewStreamingClient creates a streaming client
 func NewStreamingClient(client *Client) *StreamingClient {
 	return &StreamingClient{
-		client:        client,
-		callbacks:     make(map[string]StreamCallback),
-		lastContent:   make(map[string]string),
-		receivedDelta: make(map[string]bool),
+		client:              client,
+		callbacks:           make(map[string]StreamCallback),
+		lastContent:         make(map[string]string),
+		receivedDelta:       make(map[string]bool),
+		assistantMessageIDs: make(map[string]string),
 	}
 }
 
@@ -444,6 +446,7 @@ func (sc *StreamingClient) UnregisterCallback(sessionID string) {
 	delete(sc.callbacks, sessionID)
 	delete(sc.lastContent, sessionID)
 	delete(sc.receivedDelta, sessionID)
+	delete(sc.assistantMessageIDs, sessionID)
 }
 
 // getCallback retrieves a callback for a session
@@ -485,7 +488,7 @@ func (sc *StreamingClient) processEvent(event StreamEvent) {
 
 	switch baseData.Type {
 	case "message-v2.part.delta", "message.part.delta":
-		// Handle streaming text deltas
+		// Handle streaming text deltas (only for assistant messages)
 		var props struct {
 			SessionID string `json:"sessionID"`
 			MessageID string `json:"messageID"`
@@ -496,6 +499,15 @@ func (sc *StreamingClient) processEvent(event StreamEvent) {
 		if err := json.Unmarshal(baseData.Properties, &props); err != nil {
 			return
 		}
+
+		// Only process deltas for assistant messages
+		sc.mu.Lock()
+		assistantMsgID := sc.assistantMessageIDs[props.SessionID]
+		sc.mu.Unlock()
+		if props.MessageID != assistantMsgID {
+			return // Skip non-assistant message deltas
+		}
+
 		if cb, ok := sc.getCallback(props.SessionID); ok && props.Delta != "" {
 			// Mark that we've received delta events for this session
 			sc.mu.Lock()
@@ -505,9 +517,10 @@ func (sc *StreamingClient) processEvent(event StreamEvent) {
 		}
 
 	case "message-v2.updated", "message.updated":
-		// Check if this is a completion event (has completed timestamp)
+		// Track assistant message IDs and check for completion
 		var props struct {
 			SessionID string `json:"sessionID"`
+			MessageID string `json:"messageID"`
 			Info      struct {
 				Role string `json:"role"`
 				Time struct {
@@ -518,6 +531,14 @@ func (sc *StreamingClient) processEvent(event StreamEvent) {
 		if err := json.Unmarshal(baseData.Properties, &props); err != nil {
 			return
 		}
+
+		// Track the current assistant message ID for this session
+		if props.Info.Role == "assistant" && props.MessageID != "" {
+			sc.mu.Lock()
+			sc.assistantMessageIDs[props.SessionID] = props.MessageID
+			sc.mu.Unlock()
+		}
+
 		// If it's an assistant message with a completed timestamp, signal completion
 		if props.Info.Role == "assistant" && props.Info.Time.Completed > 0 {
 			sc.mu.Lock()
@@ -529,10 +550,11 @@ func (sc *StreamingClient) processEvent(event StreamEvent) {
 		}
 
 	case "message-v2.part.updated", "message.part.updated":
-		// Handle part updates - extract text content
+		// Handle part updates - extract text content (only for assistant messages)
 		// Skip if we're receiving delta events (they provide the same content)
 		var props struct {
 			SessionID string `json:"sessionID"`
+			MessageID string `json:"messageID"`
 			Part      struct {
 				Type    string `json:"type"`
 				Text    string `json:"text"`
@@ -543,11 +565,17 @@ func (sc *StreamingClient) processEvent(event StreamEvent) {
 			return
 		}
 
-		// Check if we're receiving delta events for this session - if so, skip
-		// to avoid duplicate content
+		// Only process updates for assistant messages
 		sc.mu.Lock()
+		assistantMsgID := sc.assistantMessageIDs[props.SessionID]
 		hasDeltas := sc.receivedDelta[props.SessionID]
 		sc.mu.Unlock()
+
+		if props.MessageID != assistantMsgID {
+			return // Skip non-assistant message updates
+		}
+
+		// Skip if we're receiving delta events for this session
 		if hasDeltas {
 			return
 		}
