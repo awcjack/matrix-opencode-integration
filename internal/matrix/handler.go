@@ -17,7 +17,7 @@ import (
 // MatrixClient is an interface for sending messages to Matrix
 type MatrixClient interface {
 	SendMessage(ctx context.Context, roomID, message string) (string, error)
-	SendLiveMessage(ctx context.Context, roomID, threadID, message string) (string, error)
+	SendLiveMessage(ctx context.Context, roomID, threadID, replyTo, message string) (string, error)
 	EditMessage(ctx context.Context, roomID, eventID, newContent string, isLive bool) error
 	SendReply(ctx context.Context, roomID, threadID, replyTo, message string, isNotice bool) (string, error)
 	SetTyping(ctx context.Context, roomID string, typing bool, timeoutMS int) error
@@ -47,6 +47,7 @@ type Handler struct {
 type StreamingMessage struct {
 	RoomID    string
 	ThreadID  string
+	ReplyTo   string // The original message event ID to reply to
 	EventID   string // The message event we're editing
 	Content   strings.Builder
 	LastEdit  time.Time
@@ -210,6 +211,7 @@ func (h *Handler) handleOpenCodeMessage(ctx context.Context, roomID, threadID, r
 	streamMsg := &StreamingMessage{
 		RoomID:   roomID,
 		ThreadID: threadID,
+		ReplyTo:  replyTo,
 		IsLive:   true,
 	}
 
@@ -298,6 +300,7 @@ func (h *Handler) handleStreamChunk(ctx context.Context, sessionID, text string)
 	eventID := streamMsg.EventID
 	roomID := streamMsg.RoomID
 	threadID := streamMsg.ThreadID
+	replyTo := streamMsg.ReplyTo
 	lastEdit := streamMsg.LastEdit
 	isLive := streamMsg.IsLive
 	h.streamingMu.Unlock()
@@ -308,8 +311,8 @@ func (h *Handler) handleStreamChunk(ctx context.Context, sessionID, text string)
 	}
 
 	if eventID == "" {
-		// Send initial message with MSC4357 live flag
-		newEventID, err := h.client.SendLiveMessage(ctx, roomID, threadID, currentContent+"▌")
+		// Send initial message with MSC4357 live flag, as a reply to the original message
+		newEventID, err := h.client.SendLiveMessage(ctx, roomID, threadID, replyTo, currentContent+"▌")
 		if err != nil {
 			log.Printf("Failed to send initial streaming message: %v", err)
 			return

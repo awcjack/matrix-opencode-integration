@@ -32,19 +32,33 @@ func (a *BotClientAdapter) SendMessage(ctx context.Context, roomID, message stri
 	return string(resp.EventID), nil
 }
 
-// SendLiveMessage sends a message with MSC4357 live flag
-func (a *BotClientAdapter) SendLiveMessage(ctx context.Context, roomID, threadID, message string) (string, error) {
+// SendLiveMessage sends a message with MSC4357 live flag, as a reply to replyTo
+func (a *BotClientAdapter) SendLiveMessage(ctx context.Context, roomID, threadID, replyTo, message string) (string, error) {
 	content := map[string]interface{}{
 		"msgtype":                 "m.text",
 		"body":                    message,
 		"org.matrix.msc4357.live": map[string]interface{}{},
 	}
 
+	// Build relates_to for thread and/or reply
+	relatesTo := map[string]interface{}{}
 	if threadID != "" {
-		content["m.relates_to"] = map[string]interface{}{
-			"rel_type": "m.thread",
-			"event_id": threadID,
+		relatesTo["rel_type"] = "m.thread"
+		relatesTo["event_id"] = threadID
+		if replyTo != "" {
+			relatesTo["is_falling_back"] = true
+			relatesTo["m.in_reply_to"] = map[string]interface{}{
+				"event_id": replyTo,
+			}
 		}
+	} else if replyTo != "" {
+		relatesTo["m.in_reply_to"] = map[string]interface{}{
+			"event_id": replyTo,
+		}
+	}
+
+	if len(relatesTo) > 0 {
+		content["m.relates_to"] = relatesTo
 	}
 
 	resp, err := a.client.SendMessageEvent(ctx, id.RoomID(roomID), event.EventMessage, content)

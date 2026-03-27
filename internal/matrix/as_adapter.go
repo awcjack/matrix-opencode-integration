@@ -25,9 +25,9 @@ func (a *ASClientAdapter) SendMessage(ctx context.Context, roomID, message strin
 	return resp.EventID, nil
 }
 
-// SendLiveMessage sends a message with MSC4357 live flag
-func (a *ASClientAdapter) SendLiveMessage(ctx context.Context, roomID, threadID, message string) (string, error) {
-	resp, err := a.client.SendLiveMessage(ctx, roomID, threadID, message)
+// SendLiveMessage sends a message with MSC4357 live flag, as a reply to replyTo
+func (a *ASClientAdapter) SendLiveMessage(ctx context.Context, roomID, threadID, replyTo, message string) (string, error) {
+	resp, err := a.client.SendLiveMessage(ctx, roomID, threadID, replyTo, message)
 	if err != nil {
 		return "", err
 	}
