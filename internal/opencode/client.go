@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"strings"
 	"sync"
@@ -407,9 +408,9 @@ func (c *Client) GetAgents(ctx context.Context) ([]Agent, error) {
 type StreamingClient struct {
 	client             *Client
 	mu                 sync.Mutex
-	callbacks          map[string]StreamCallback    // sessionID -> callback
-	completionCallback CompletionCallback           // global completion callback
-	lastContent        map[string]string            // sessionID -> last content sent (for dedup)
+	callbacks          map[string]StreamCallback // sessionID -> callback
+	completionCallback CompletionCallback        // global completion callback
+	lastContent        map[string]string         // sessionID -> last content sent (for dedup)
 }
 
 // NewStreamingClient creates a streaming client
