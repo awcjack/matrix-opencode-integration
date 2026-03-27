@@ -473,7 +473,7 @@ func (sc *StreamingClient) processEvent(event StreamEvent) {
 	}
 
 	switch baseData.Type {
-	case "message-v2.part.delta":
+	case "message-v2.part.delta", "message.part.delta":
 		// Handle streaming text deltas
 		var props struct {
 			SessionID string `json:"sessionID"`
@@ -489,7 +489,7 @@ func (sc *StreamingClient) processEvent(event StreamEvent) {
 			cb(props.Delta)
 		}
 
-	case "message-v2.updated":
+	case "message-v2.updated", "message.updated":
 		// Check if this is a completion event (has completed timestamp)
 		var props struct {
 			SessionID string `json:"sessionID"`
@@ -513,22 +513,27 @@ func (sc *StreamingClient) processEvent(event StreamEvent) {
 			}
 		}
 
-	case "message-v2.part.updated":
+	case "message-v2.part.updated", "message.part.updated":
 		// Handle part updates - extract text content
 		var props struct {
 			SessionID string `json:"sessionID"`
 			Part      struct {
 				Type    string `json:"type"`
+				Text    string `json:"text"`
 				Content string `json:"content"`
 			} `json:"part"`
 		}
 		if err := json.Unmarshal(baseData.Properties, &props); err != nil {
 			return
 		}
-		// Only handle text parts
-		if props.Part.Type == "text" && props.Part.Content != "" {
+		// Only handle text parts - check both "text" and "content" fields
+		text := props.Part.Text
+		if text == "" {
+			text = props.Part.Content
+		}
+		if props.Part.Type == "text" && text != "" {
 			if cb, ok := sc.getCallback(props.SessionID); ok {
-				cb(props.Part.Content)
+				cb(text)
 			}
 		}
 	}
