@@ -302,6 +302,7 @@ func (c *Client) StreamEvents(ctx context.Context) (<-chan StreamEvent, error) {
 	go func() {
 		defer resp.Body.Close()
 		defer close(events)
+		log.Printf("SSE event loop started, connected to %s/event", c.baseURL)
 
 		reader := bufio.NewReader(resp.Body)
 		var currentEvent StreamEvent
@@ -309,6 +310,7 @@ func (c *Client) StreamEvents(ctx context.Context) (<-chan StreamEvent, error) {
 		for {
 			select {
 			case <-ctx.Done():
+				log.Printf("SSE event loop: context cancelled")
 				return
 			default:
 			}
@@ -316,7 +318,9 @@ func (c *Client) StreamEvents(ctx context.Context) (<-chan StreamEvent, error) {
 			line, err := reader.ReadString('\n')
 			if err != nil {
 				if err != io.EOF {
-					// Log error but continue
+					log.Printf("SSE event loop error: %v", err)
+				} else {
+					log.Printf("SSE event loop: connection closed (EOF)")
 				}
 				return
 			}
@@ -326,6 +330,7 @@ func (c *Client) StreamEvents(ctx context.Context) (<-chan StreamEvent, error) {
 			if line == "" {
 				// End of event
 				if currentEvent.Event != "" || currentEvent.Data != "" {
+					log.Printf("SSE received event: %s (data length: %d)", currentEvent.Event, len(currentEvent.Data))
 					select {
 					case events <- currentEvent:
 					case <-ctx.Done():
@@ -472,8 +477,11 @@ func (sc *StreamingClient) processEvent(event StreamEvent) {
 	}
 
 	if err := json.Unmarshal([]byte(event.Data), &baseData); err != nil {
+		log.Printf("SSE processEvent: failed to parse event data: %v", err)
 		return
 	}
+
+	log.Printf("SSE processEvent: type=%s", baseData.Type)
 
 	switch baseData.Type {
 	case "message-v2.part.delta", "message.part.delta":
@@ -504,10 +512,13 @@ func (sc *StreamingClient) processEvent(event StreamEvent) {
 			} `json:"info"`
 		}
 		if err := json.Unmarshal(baseData.Properties, &props); err != nil {
+			log.Printf("SSE message.updated: failed to parse props: %v", err)
 			return
 		}
+		log.Printf("SSE message.updated: sessionID=%s role=%s completed=%d", props.SessionID, props.Info.Role, props.Info.Time.Completed)
 		// If it's an assistant message with a completed timestamp, signal completion
 		if props.Info.Role == "assistant" && props.Info.Time.Completed > 0 {
+			log.Printf("SSE completion signal for session %s", props.SessionID)
 			sc.mu.Lock()
 			cb := sc.completionCallback
 			sc.mu.Unlock()
