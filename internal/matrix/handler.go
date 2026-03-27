@@ -180,8 +180,17 @@ func (h *Handler) handleMemberEvent(ctx context.Context, event *appservice.Event
 
 // handleOpenCodeMessage sends a message to OpenCode and streams the response
 func (h *Handler) handleOpenCodeMessage(ctx context.Context, roomID, threadID, replyTo, message string) {
-	// Get or create session
-	sess, err := h.sessionMgr.GetOrCreateSession(ctx, roomID, threadID)
+	// For non-threaded messages, always create a new session
+	// For threaded messages, reuse the existing session for that thread
+	var sess *session.UserSession
+	var err error
+	if threadID == "" {
+		// Non-threaded: each message is a standalone conversation
+		sess, err = h.sessionMgr.CreateNewSession(ctx, roomID, threadID)
+	} else {
+		// Threaded: continue the conversation within the thread
+		sess, err = h.sessionMgr.GetOrCreateSession(ctx, roomID, threadID)
+	}
 	if err != nil {
 		h.sendReply(ctx, roomID, threadID, replyTo, "Failed to create session: "+err.Error(), true)
 		return
