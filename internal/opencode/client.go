@@ -404,13 +404,15 @@ type StreamingClient struct {
 	mu                 sync.Mutex
 	callbacks          map[string]StreamCallback    // sessionID -> callback
 	completionCallback CompletionCallback           // global completion callback
+	lastContent        map[string]string            // sessionID -> last content sent (for dedup)
 }
 
 // NewStreamingClient creates a streaming client
 func NewStreamingClient(client *Client) *StreamingClient {
 	return &StreamingClient{
-		client:    client,
-		callbacks: make(map[string]StreamCallback),
+		client:      client,
+		callbacks:   make(map[string]StreamCallback),
+		lastContent: make(map[string]string),
 	}
 }
 
@@ -433,6 +435,7 @@ func (sc *StreamingClient) UnregisterCallback(sessionID string) {
 	sc.mu.Lock()
 	defer sc.mu.Unlock()
 	delete(sc.callbacks, sessionID)
+	delete(sc.lastContent, sessionID)
 }
 
 // getCallback retrieves a callback for a session
@@ -532,8 +535,21 @@ func (sc *StreamingClient) processEvent(event StreamEvent) {
 			text = props.Part.Content
 		}
 		if props.Part.Type == "text" && text != "" {
-			if cb, ok := sc.getCallback(props.SessionID); ok {
-				cb(text)
+			// Deduplicate: message.part.updated sends full content each time
+			// Only send new content (delta) to avoid duplicates
+			sc.mu.Lock()
+			lastContent := sc.lastContent[props.SessionID]
+			if text != lastContent && len(text) > len(lastContent) {
+				// New content is longer - extract delta
+				delta := text[len(lastContent):]
+				sc.lastContent[props.SessionID] = text
+				sc.mu.Unlock()
+
+				if cb, ok := sc.getCallback(props.SessionID); ok {
+					cb(delta)
+				}
+			} else {
+				sc.mu.Unlock()
 			}
 		}
 	}
