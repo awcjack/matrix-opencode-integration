@@ -106,7 +106,35 @@ func Load(path string) (*Config, error) {
 	// Set defaults
 	cfg.setDefaults()
 
+	// Override secrets from environment variables (allows config file + env secrets)
+	cfg.applyEnvOverrides()
+
 	return &cfg, nil
+}
+
+// applyEnvOverrides allows environment variables to override config file values
+// This is useful for secrets that shouldn't be in config files
+func (c *Config) applyEnvOverrides() {
+	// AppService tokens from environment
+	if v := os.Getenv("AS_HS_TOKEN"); v != "" {
+		c.AppService.HSToken = v
+	}
+	if v := os.Getenv("AS_TOKEN"); v != "" {
+		c.AppService.ASToken = v
+	}
+
+	// OpenCode credentials from environment
+	if v := os.Getenv("OPENCODE_PASSWORD"); v != "" {
+		c.OpenCode.Password = v
+	}
+	if v := os.Getenv("OPENCODE_USERNAME"); v != "" {
+		c.OpenCode.Username = v
+	}
+
+	// Matrix access token for bot mode
+	if v := os.Getenv("MATRIX_ACCESS_TOKEN"); v != "" {
+		c.Matrix.AccessToken = v
+	}
 }
 
 // LoadFromEnv reads configuration from environment variables
