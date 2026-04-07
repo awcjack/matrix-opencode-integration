@@ -212,10 +212,16 @@ func (c *Client) DeleteSession(ctx context.Context, sessionID string) error {
 	return nil
 }
 
+// ModelConfig represents the model configuration for a message
+type ModelConfig struct {
+	ProviderID string `json:"providerID"`
+	ModelID    string `json:"modelID"`
+}
+
 // SendMessageRequest represents a message send request
 type SendMessageRequest struct {
 	Parts     []MessagePart `json:"parts"`
-	Model     string        `json:"model,omitempty"`
+	Model     *ModelConfig  `json:"model,omitempty"`
 	Agent     string        `json:"agent,omitempty"`
 	MessageID string        `json:"messageID,omitempty"`
 }
@@ -226,11 +232,30 @@ type SendMessageResponse struct {
 	Parts []MessagePart `json:"parts"`
 }
 
+// parseModelString parses a model string like "provider/model" into ModelConfig
+func parseModelString(model string) *ModelConfig {
+	if model == "" {
+		return nil
+	}
+	parts := strings.SplitN(model, "/", 2)
+	if len(parts) == 2 {
+		return &ModelConfig{
+			ProviderID: parts[0],
+			ModelID:    parts[1],
+		}
+	}
+	// If no slash, assume it's just a model ID with empty provider
+	return &ModelConfig{
+		ProviderID: "",
+		ModelID:    model,
+	}
+}
+
 // SendMessage sends a message to a session (non-streaming)
 func (c *Client) SendMessage(ctx context.Context, sessionID string, message string, model, agent string) (*SendMessageResponse, error) {
 	req := SendMessageRequest{
 		Parts: []MessagePart{{Type: "text", Text: message}},
-		Model: model,
+		Model: parseModelString(model),
 		Agent: agent,
 	}
 
@@ -257,7 +282,7 @@ func (c *Client) SendMessage(ctx context.Context, sessionID string, message stri
 func (c *Client) SendMessageAsync(ctx context.Context, sessionID string, message string, model, agent string) error {
 	req := SendMessageRequest{
 		Parts: []MessagePart{{Type: "text", Text: message}},
-		Model: model,
+		Model: parseModelString(model),
 		Agent: agent,
 	}
 
