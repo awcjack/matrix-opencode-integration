@@ -56,6 +56,7 @@ func main() {
 	log.Printf("Starting Matrix-OpenCode integration in %s mode", cfg.Mode)
 	log.Printf("Matrix homeserver: %s", cfg.Matrix.Homeserver)
 	log.Printf("OpenCode server: %s", cfg.OpenCode.ServerURL)
+	log.Printf("OpenCode auth: username=%s, password_set=%v", cfg.OpenCode.Username, cfg.OpenCode.Password != "")
 	log.Printf("Whitelisted users: %d", len(cfg.Whitelist))
 
 	// Create OpenCode client
