@@ -56,6 +56,8 @@ func (h *Handler) Parse(ctx context.Context, input, roomID, threadID string) *Co
 		return h.handleSetProvider(ctx, roomID, threadID, args)
 	case "!providers", "!listproviders":
 		return h.handleListProviders(ctx)
+	case "!model", "!setmodel":
+		return h.handleSetModel(ctx, roomID, threadID, args)
 	case "!agent", "!setagent":
 		return h.handleSetAgent(ctx, roomID, threadID, args)
 	case "!agents", "!listagents":
@@ -84,11 +86,12 @@ func (h *Handler) handleHelp() *CommandResult {
 • !sessions - List all sessions (from OpenCode)
 • !switch <session_id> - Switch to a specific session
 
-**Provider & Agent:**
-• !provider <name> / !setprovider <name> - Switch to a different provider
-• !providers / !listproviders - List available providers
-• !agent <name> / !setagent <name> - Switch to a different agent
-• !agents / !listagents - List available agents
+**Model & Agent:**
+• !model <provider/model> - Set model (e.g., !model local-claude/local-claude-opus)
+• !provider <name> - Set provider only (uses provider's default model)
+• !providers - List available providers
+• !agent <name> - Switch to a different agent
+• !agents - List available agents
 
 **Help:**
 • !help - Show this help message
@@ -174,6 +177,45 @@ func (h *Handler) handleSetProvider(ctx context.Context, roomID, threadID string
 
 	return &CommandResult{
 		Message:   fmt.Sprintf("Provider set to: %s", providerName),
+		IsCommand: true,
+	}
+}
+
+func (h *Handler) handleSetModel(ctx context.Context, roomID, threadID string, args []string) *CommandResult {
+	if len(args) == 0 {
+		return &CommandResult{
+			Message:   "Usage: !model <provider/model>\nExample: !model local-claude/local-claude-opus",
+			IsError:   true,
+			IsCommand: true,
+		}
+	}
+
+	model := args[0]
+
+	// Validate format: should contain a slash
+	if !strings.Contains(model, "/") {
+		return &CommandResult{
+			Message:   fmt.Sprintf("Invalid model format '%s'. Use provider/model format (e.g., local-claude/local-claude-opus)", model),
+			IsError:   true,
+			IsCommand: true,
+		}
+	}
+
+	// Ensure session exists
+	_, err := h.sessionMgr.GetOrCreateSession(ctx, roomID, threadID)
+	if err != nil {
+		return &CommandResult{
+			Message:   fmt.Sprintf("Failed to get session: %v", err),
+			IsError:   true,
+			IsCommand: true,
+		}
+	}
+
+	// Store the full model string (provider/model format)
+	h.sessionMgr.SetProvider(roomID, threadID, model)
+
+	return &CommandResult{
+		Message:   fmt.Sprintf("Model set to: %s", model),
 		IsCommand: true,
 	}
 }
