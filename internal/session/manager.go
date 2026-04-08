@@ -2,6 +2,7 @@ package session
 
 import (
 	"context"
+	"log"
 	"sync"
 
 	"github.com/personal/matrix-opencode-integration/internal/opencode"
@@ -135,6 +136,9 @@ func (m *Manager) CreateNewSession(ctx context.Context, roomID, threadID string)
 	if exists {
 		provider = oldSession.Provider
 		agent = oldSession.Agent
+		log.Printf("[DEBUG] CreateNewSession: preserving from old session: provider=%s, agent=%s", provider, agent)
+	} else {
+		log.Printf("[DEBUG] CreateNewSession: no old session, using defaults: provider=%s, agent=%s", provider, agent)
 	}
 
 	session := &UserSession{
@@ -147,6 +151,8 @@ func (m *Manager) CreateNewSession(ctx context.Context, roomID, threadID string)
 	}
 
 	m.sessions[key] = session
+	log.Printf("[DEBUG] CreateNewSession: created session key={%s, %s}, ocSessionID=%s, provider=%s",
+		roomID, threadID, ocSession.ID, provider)
 	return session, nil
 }
 

@@ -3,6 +3,7 @@ package commands
 import (
 	"context"
 	"fmt"
+	"log"
 	"strings"
 
 	"github.com/personal/matrix-opencode-integration/internal/opencode"
@@ -212,7 +213,9 @@ func (h *Handler) handleSetModel(ctx context.Context, roomID, threadID string, a
 	}
 
 	// Store the full model string (provider/model format)
-	h.sessionMgr.SetProvider(roomID, threadID, model)
+	ok := h.sessionMgr.SetProvider(roomID, threadID, model)
+	log.Printf("[DEBUG] SetProvider called: roomID=%s, threadID=%s, model=%s, success=%v",
+		roomID, threadID, model, ok)
 
 	return &CommandResult{
 		Message:   fmt.Sprintf("Model set to: %s", model),

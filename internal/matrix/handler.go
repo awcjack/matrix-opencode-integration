@@ -233,6 +233,8 @@ func (h *Handler) handleOpenCodeMessage(ctx context.Context, roomID, threadID, r
 	}()
 
 	// Send message to OpenCode (async for streaming)
+	log.Printf("[DEBUG] Sending message to OpenCode: sessionID=%s, model=%s, agent=%s",
+		sess.OpenCodeSessionID, sess.Provider, sess.Agent)
 	err = h.ocClient.SendMessageAsync(ctx, sess.OpenCodeSessionID, message, sess.Provider, sess.Agent)
 	if err != nil {
 		// Fall back to synchronous if async fails
