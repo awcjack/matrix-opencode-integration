@@ -2,6 +2,7 @@ package matrix
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"strings"
 	"sync"
@@ -77,6 +78,30 @@ func NewHandler(client MatrixClient, ocClient *opencode.Client, cfg *config.Conf
 		doneChan, exists := h.pendingResponses[sessionID]
 		h.streamingMu.Unlock()
 		if exists {
+			select {
+			case <-doneChan:
+				// Already closed
+			default:
+				close(doneChan)
+			}
+		}
+	})
+
+	// Register error callback to notify users of OpenCode errors
+	streamingClient.SetErrorCallback(func(sessionID string, err error) {
+		h.streamingMu.Lock()
+		streamMsg, exists := h.streamingMsgs[sessionID]
+		doneChan := h.pendingResponses[sessionID]
+		h.streamingMu.Unlock()
+
+		if exists && streamMsg != nil {
+			// Send error message to Matrix room
+			errMsg := fmt.Sprintf("⚠️ OpenCode error: %s", err.Error())
+			h.sendReply(context.Background(), streamMsg.RoomID, streamMsg.ThreadID, streamMsg.ReplyTo, errMsg, true)
+		}
+
+		// Signal completion so the handler doesn't hang
+		if doneChan != nil {
 			select {
 			case <-doneChan:
 				// Already closed

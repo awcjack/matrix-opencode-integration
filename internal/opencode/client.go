@@ -104,6 +104,9 @@ type StreamCallback func(text string)
 // CompletionCallback is called when a message streaming is complete
 type CompletionCallback func(sessionID string)
 
+// ErrorCallback is called when a session error occurs
+type ErrorCallback func(sessionID string, err error)
+
 // doRequest performs an authenticated HTTP request
 func (c *Client) doRequest(ctx context.Context, method, path string, body interface{}) (*http.Response, error) {
 	var bodyReader io.Reader
@@ -437,6 +440,7 @@ type StreamingClient struct {
 	mu                  sync.Mutex
 	callbacks           map[string]StreamCallback // sessionID -> callback
 	completionCallback  CompletionCallback        // global completion callback
+	errorCallback       ErrorCallback             // global error callback
 	lastContent         map[string]string         // sessionID -> last content sent (for dedup)
 	receivedDelta       map[string]bool           // sessionID -> whether we've received delta events
 	userMessageIDs      map[string]string         // sessionID -> current user messageID (to skip user messages)
@@ -458,6 +462,13 @@ func (sc *StreamingClient) SetCompletionCallback(callback CompletionCallback) {
 	sc.mu.Lock()
 	defer sc.mu.Unlock()
 	sc.completionCallback = callback
+}
+
+// SetErrorCallback sets the callback for session error events
+func (sc *StreamingClient) SetErrorCallback(callback ErrorCallback) {
+	sc.mu.Lock()
+	defer sc.mu.Unlock()
+	sc.errorCallback = callback
 }
 
 // RegisterCallback registers a callback for a session's streaming response
@@ -711,6 +722,31 @@ func (sc *StreamingClient) processEvent(event StreamEvent) {
 			} else {
 				sc.mu.Unlock()
 			}
+		}
+
+	case "session.error":
+		// Handle session errors from OpenCode
+		var props struct {
+			SessionID string `json:"sessionID"`
+			Error     struct {
+				Name    string `json:"name"`
+				Message string `json:"message"`
+			} `json:"error"`
+		}
+		if err := json.Unmarshal(baseData.Properties, &props); err != nil {
+			log.Printf("[ERROR] SSE: session.error received but failed to parse: %v, raw: %s", err, string(baseData.Properties))
+			return
+		}
+
+		log.Printf("[ERROR] SSE: session.error sessionID=%s error=%s: %s",
+			props.SessionID, props.Error.Name, props.Error.Message)
+
+		// Call error callback if registered
+		sc.mu.Lock()
+		cb := sc.errorCallback
+		sc.mu.Unlock()
+		if cb != nil {
+			cb(props.SessionID, fmt.Errorf("%s: %s", props.Error.Name, props.Error.Message))
 		}
 
 	default:
