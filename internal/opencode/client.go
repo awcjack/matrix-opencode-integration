@@ -591,7 +591,13 @@ func (sc *StreamingClient) processEvent(event StreamEvent) {
 	}
 
 	if err := json.Unmarshal(eventData, &baseData); err != nil {
+		log.Printf("[DEBUG] SSE: failed to parse event data: %v, raw: %s", err, string(eventData))
 		return
+	}
+
+	// Log message-related events for debugging
+	if strings.HasPrefix(baseData.Type, "message") {
+		log.Printf("[DEBUG] SSE: message event type=%s", baseData.Type)
 	}
 
 	switch baseData.Type {
@@ -621,7 +627,10 @@ func (sc *StreamingClient) processEvent(event StreamEvent) {
 			sc.mu.Lock()
 			sc.receivedDelta[props.SessionID] = true
 			sc.mu.Unlock()
+			log.Printf("[DEBUG] SSE: calling delta callback for session=%s, delta_len=%d", props.SessionID, len(props.Delta))
 			cb(props.Delta)
+		} else if props.Delta != "" {
+			log.Printf("[DEBUG] SSE: no callback for session=%s (delta received but not registered)", props.SessionID)
 		}
 
 	case "message-v2.updated", "message.updated":
