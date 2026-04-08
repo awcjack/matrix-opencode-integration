@@ -726,11 +726,14 @@ func (sc *StreamingClient) processEvent(event StreamEvent) {
 
 	case "session.error":
 		// Handle session errors from OpenCode
+		// Error structure: { name: "ErrorType", data?: { message: "..." } }
 		var props struct {
 			SessionID string `json:"sessionID"`
 			Error     struct {
-				Name    string `json:"name"`
-				Message string `json:"message"`
+				Name string `json:"name"`
+				Data struct {
+					Message string `json:"message"`
+				} `json:"data"`
 			} `json:"error"`
 		}
 		if err := json.Unmarshal(baseData.Properties, &props); err != nil {
@@ -738,15 +741,23 @@ func (sc *StreamingClient) processEvent(event StreamEvent) {
 			return
 		}
 
+		errMsg := props.Error.Data.Message
+		if errMsg == "" {
+			errMsg = props.Error.Name
+		}
+
 		log.Printf("[ERROR] SSE: session.error sessionID=%s error=%s: %s",
-			props.SessionID, props.Error.Name, props.Error.Message)
+			props.SessionID, props.Error.Name, errMsg)
+
+		// Also log raw properties for debugging
+		log.Printf("[DEBUG] SSE: session.error raw properties: %s", string(baseData.Properties))
 
 		// Call error callback if registered
 		sc.mu.Lock()
 		cb := sc.errorCallback
 		sc.mu.Unlock()
 		if cb != nil {
-			cb(props.SessionID, fmt.Errorf("%s: %s", props.Error.Name, props.Error.Message))
+			cb(props.SessionID, fmt.Errorf("%s: %s", props.Error.Name, errMsg))
 		}
 
 	default:
