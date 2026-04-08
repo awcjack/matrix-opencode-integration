@@ -677,14 +677,22 @@ func (sc *StreamingClient) processEvent(event StreamEvent) {
 			return
 		}
 
-		// Only signal completion when session stops running
+		// Only signal completion when session stops running AND we have a registered callback
+		// (this prevents triggering on initial session creation when running=false initially)
 		if !props.Running {
-			log.Printf("[DEBUG] SSE: session.updated - session stopped running, signaling completion for session=%s", props.SessionID)
 			sc.mu.Lock()
+			_, hasCallback := sc.callbacks[props.SessionID]
+			_, hasCompleted := sc.completedMessages[props.SessionID]
 			cb := sc.completionCallback
 			sc.mu.Unlock()
-			if cb != nil {
-				cb(props.SessionID)
+
+			// Only signal if we have a callback registered (meaning we sent a message)
+			// AND we've seen at least one completed message (meaning processing started)
+			if hasCallback && hasCompleted {
+				log.Printf("[DEBUG] SSE: session.updated - session stopped running, signaling completion for session=%s", props.SessionID)
+				if cb != nil {
+					cb(props.SessionID)
+				}
 			}
 		}
 
