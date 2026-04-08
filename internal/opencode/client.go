@@ -562,8 +562,12 @@ func (sc *StreamingClient) processEvent(event StreamEvent) {
 	}
 
 	if err := json.Unmarshal([]byte(event.Data), &baseData); err != nil {
+		log.Printf("[DEBUG] SSE: failed to parse event data: %v, raw: %s", err, event.Data)
 		return
 	}
+
+	// Log all event types for debugging
+	log.Printf("[DEBUG] SSE: received event type=%s", baseData.Type)
 
 	switch baseData.Type {
 	case "message-v2.part.delta", "message.part.delta":
@@ -576,8 +580,12 @@ func (sc *StreamingClient) processEvent(event StreamEvent) {
 			Delta     string `json:"delta"`
 		}
 		if err := json.Unmarshal(baseData.Properties, &props); err != nil {
+			log.Printf("[DEBUG] SSE: failed to parse part.delta properties: %v", err)
 			return
 		}
+
+		log.Printf("[DEBUG] SSE: part.delta sessionID=%s messageID=%s delta_len=%d",
+			props.SessionID, props.MessageID, len(props.Delta))
 
 		// Skip if this is a known user message
 		sc.mu.Lock()
@@ -608,8 +616,12 @@ func (sc *StreamingClient) processEvent(event StreamEvent) {
 			} `json:"info"`
 		}
 		if err := json.Unmarshal(baseData.Properties, &props); err != nil {
+			log.Printf("[DEBUG] SSE: failed to parse message.updated properties: %v", err)
 			return
 		}
+
+		log.Printf("[DEBUG] SSE: message.updated sessionID=%s messageID=%s role=%s completed=%d",
+			props.SessionID, props.MessageID, props.Info.Role, props.Info.Time.Completed)
 
 		// Track user message IDs so we can skip them in delta/part.updated handlers
 		if props.Info.Role == "user" && props.MessageID != "" {
@@ -682,5 +694,9 @@ func (sc *StreamingClient) processEvent(event StreamEvent) {
 				sc.mu.Unlock()
 			}
 		}
+
+	default:
+		// Log unhandled event types for debugging
+		log.Printf("[DEBUG] SSE: unhandled event type=%s", baseData.Type)
 	}
 }
