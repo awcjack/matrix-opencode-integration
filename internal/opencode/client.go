@@ -591,12 +591,8 @@ func (sc *StreamingClient) processEvent(event StreamEvent) {
 	}
 
 	if err := json.Unmarshal(eventData, &baseData); err != nil {
-		log.Printf("[DEBUG] SSE: failed to parse event data: %v, raw: %s", err, event.Data)
 		return
 	}
-
-	// Log all event types for debugging
-	log.Printf("[DEBUG] SSE: received event type=%s", baseData.Type)
 
 	switch baseData.Type {
 	case "message-v2.part.delta", "message.part.delta":
@@ -609,12 +605,8 @@ func (sc *StreamingClient) processEvent(event StreamEvent) {
 			Delta     string `json:"delta"`
 		}
 		if err := json.Unmarshal(baseData.Properties, &props); err != nil {
-			log.Printf("[DEBUG] SSE: failed to parse part.delta properties: %v", err)
 			return
 		}
-
-		log.Printf("[DEBUG] SSE: part.delta sessionID=%s messageID=%s delta_len=%d",
-			props.SessionID, props.MessageID, len(props.Delta))
 
 		// Skip if this is a known user message
 		sc.mu.Lock()
@@ -645,12 +637,8 @@ func (sc *StreamingClient) processEvent(event StreamEvent) {
 			} `json:"info"`
 		}
 		if err := json.Unmarshal(baseData.Properties, &props); err != nil {
-			log.Printf("[DEBUG] SSE: failed to parse message.updated properties: %v", err)
 			return
 		}
-
-		log.Printf("[DEBUG] SSE: message.updated sessionID=%s messageID=%s role=%s completed=%d",
-			props.SessionID, props.MessageID, props.Info.Role, props.Info.Time.Completed)
 
 		// Track user message IDs so we can skip them in delta/part.updated handlers
 		if props.Info.Role == "user" && props.MessageID != "" {
@@ -749,9 +737,6 @@ func (sc *StreamingClient) processEvent(event StreamEvent) {
 		log.Printf("[ERROR] SSE: session.error sessionID=%s error=%s: %s",
 			props.SessionID, props.Error.Name, errMsg)
 
-		// Also log raw properties for debugging
-		log.Printf("[DEBUG] SSE: session.error raw properties: %s", string(baseData.Properties))
-
 		// Call error callback if registered
 		sc.mu.Lock()
 		cb := sc.errorCallback
@@ -761,7 +746,6 @@ func (sc *StreamingClient) processEvent(event StreamEvent) {
 		}
 
 	default:
-		// Log unhandled event types for debugging
-		log.Printf("[DEBUG] SSE: unhandled event type=%s", baseData.Type)
+		// Ignore other event types (session.created, session.updated, server.heartbeat, etc.)
 	}
 }
