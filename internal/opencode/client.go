@@ -301,8 +301,10 @@ func (c *Client) SendMessageAsync(ctx context.Context, sessionID string, message
 }
 
 // StreamEvents connects to the SSE event stream
+// Uses /global/event to receive events from all instances (required because
+// each HTTP request may create a different instance context with its own Bus)
 func (c *Client) StreamEvents(ctx context.Context) (<-chan StreamEvent, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/event", nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/global/event", nil)
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
@@ -554,6 +556,22 @@ func (sc *StreamingClient) eventLoopWithReconnect(ctx context.Context) {
 
 // processEvent handles incoming SSE events
 func (sc *StreamingClient) processEvent(event StreamEvent) {
+	// /global/event wraps events in { directory, payload } format
+	// We need to unwrap the payload first
+	var globalEvent struct {
+		Directory string          `json:"directory"`
+		Payload   json.RawMessage `json:"payload"`
+	}
+
+	eventData := []byte(event.Data)
+
+	// Try to parse as global event format first
+	if err := json.Unmarshal(eventData, &globalEvent); err == nil && globalEvent.Payload != nil {
+		// Successfully parsed as global event, use the payload
+		eventData = globalEvent.Payload
+	}
+	// Otherwise, use the original event data (for backwards compatibility)
+
 	// Parse the event based on its type
 	// OpenCode sends events like "message-v2.updated", "message-v2.part.updated", "message-v2.part.delta"
 	var baseData struct {
@@ -561,7 +579,7 @@ func (sc *StreamingClient) processEvent(event StreamEvent) {
 		Properties json.RawMessage `json:"properties"`
 	}
 
-	if err := json.Unmarshal([]byte(event.Data), &baseData); err != nil {
+	if err := json.Unmarshal(eventData, &baseData); err != nil {
 		log.Printf("[DEBUG] SSE: failed to parse event data: %v, raw: %s", err, event.Data)
 		return
 	}
