@@ -444,16 +444,18 @@ type StreamingClient struct {
 	lastContent         map[string]string         // sessionID -> last content sent (for dedup)
 	receivedDelta       map[string]bool           // sessionID -> whether we've received delta events
 	userMessageIDs      map[string]string         // sessionID -> current user messageID (to skip user messages)
+	completedMessages   map[string]bool           // sessionID -> whether we've seen a completed message
 }
 
 // NewStreamingClient creates a streaming client
 func NewStreamingClient(client *Client) *StreamingClient {
 	return &StreamingClient{
-		client:         client,
-		callbacks:      make(map[string]StreamCallback),
-		lastContent:    make(map[string]string),
-		receivedDelta:  make(map[string]bool),
-		userMessageIDs: make(map[string]string),
+		client:            client,
+		callbacks:         make(map[string]StreamCallback),
+		lastContent:       make(map[string]string),
+		receivedDelta:     make(map[string]bool),
+		userMessageIDs:    make(map[string]string),
+		completedMessages: make(map[string]bool),
 	}
 }
 
@@ -656,8 +658,28 @@ func (sc *StreamingClient) processEvent(event StreamEvent) {
 			sc.mu.Unlock()
 		}
 
-		// If it's an assistant message with a completed timestamp, signal completion
+		// If it's an assistant message with a completed timestamp, track it
+		// Don't immediately signal completion - there may be more messages (e.g., from sub-agents)
 		if props.Info.Role == "assistant" && props.Info.Time.Completed > 0 {
+			log.Printf("[DEBUG] SSE: message.updated with completed timestamp for session=%s, msgID=%s", props.SessionID, props.MessageID)
+			sc.mu.Lock()
+			sc.completedMessages[props.SessionID] = true
+			sc.mu.Unlock()
+		}
+
+	case "session.updated":
+		// Check if session is no longer running - this is the final completion signal
+		var props struct {
+			SessionID string `json:"sessionID"`
+			Running   bool   `json:"running"`
+		}
+		if err := json.Unmarshal(baseData.Properties, &props); err != nil {
+			return
+		}
+
+		// Only signal completion when session stops running
+		if !props.Running {
+			log.Printf("[DEBUG] SSE: session.updated - session stopped running, signaling completion for session=%s", props.SessionID)
 			sc.mu.Lock()
 			cb := sc.completionCallback
 			sc.mu.Unlock()
