@@ -488,6 +488,10 @@ func (sc *StreamingClient) UnregisterCallback(sessionID string) {
 	delete(sc.lastContent, sessionID)
 	delete(sc.receivedDelta, sessionID)
 	delete(sc.userMessageIDs, sessionID)
+	// Clear completion state so the next message in a reused session
+	// must observe its own message.updated(completed) before session.updated
+	// can fire completion.
+	delete(sc.completedMessages, sessionID)
 }
 
 // getCallback retrieves a callback for a session
@@ -668,18 +672,19 @@ func (sc *StreamingClient) processEvent(event StreamEvent) {
 		}
 
 	case "session.updated":
-		// Check if session is no longer running - this is the final completion signal
+		// Check if session is no longer running - this is the final completion signal.
+		// Use *bool so a missing "running" field (e.g. on title/model updates) decodes
+		// to nil rather than false, which would otherwise trigger spurious completion.
 		var props struct {
 			SessionID string `json:"sessionID"`
-			Running   bool   `json:"running"`
+			Running   *bool  `json:"running"`
 		}
 		if err := json.Unmarshal(baseData.Properties, &props); err != nil {
 			return
 		}
 
-		// Only signal completion when session stops running AND we have a registered callback
-		// (this prevents triggering on initial session creation when running=false initially)
-		if !props.Running {
+		// Only act on an explicit running=false. nil means the field wasn't present.
+		if props.Running != nil && !*props.Running {
 			sc.mu.Lock()
 			_, hasCallback := sc.callbacks[props.SessionID]
 			_, hasCompleted := sc.completedMessages[props.SessionID]
