@@ -32,15 +32,29 @@ type EventHandler func(ctx context.Context, event *Event)
 
 // Server implements the Application Service HTTP API
 type Server struct {
-	hsToken      string
-	asToken      string
-	botUserID    string
-	handler      EventHandler
-	server       *http.Server
+	hsToken   string
+	asToken   string
+	botUserID string
+	handler   EventHandler
+	server    *http.Server
 
 	// Track processed transactions for idempotency
 	txnMu        sync.Mutex
 	processedTxn map[string]bool
+
+	// Long-lived context for async event handlers; cancelled on Stop.
+	baseCtx    context.Context
+	cancelBase context.CancelFunc
+
+	// In-flight async handlers, awaited during shutdown.
+	wg sync.WaitGroup
+
+	// Per-room serialization: each room's value is the "done" channel of
+	// the most recently dispatched event. New events chain after it so
+	// that events within the same room run sequentially while different
+	// rooms run in parallel.
+	roomMu    sync.Mutex
+	roomTails map[string]chan struct{}
 }
 
 // NewServer creates a new Application Service server
@@ -51,11 +65,17 @@ func NewServer(hsToken, asToken, botUserID string, handler EventHandler) *Server
 		botUserID:    botUserID,
 		handler:      handler,
 		processedTxn: make(map[string]bool),
+		roomTails:    make(map[string]chan struct{}),
 	}
 }
 
 // Start starts the AS HTTP server
 func (s *Server) Start(ctx context.Context, addr string) error {
+	// Derive a long-lived context for async event handlers. This is
+	// independent of any individual HTTP request's context so streaming
+	// work can outlive Synapse's transaction timeout.
+	s.baseCtx, s.cancelBase = context.WithCancel(context.Background())
+
 	mux := http.NewServeMux()
 
 	// Application Service API endpoints
@@ -94,12 +114,31 @@ func (s *Server) Start(ctx context.Context, addr string) error {
 	}
 }
 
-// Stop gracefully stops the server
+// Stop gracefully stops the server. It first stops accepting new HTTP
+// requests, then waits for in-flight async event handlers to finish (or
+// for ctx to expire), and finally cancels the base context to signal
+// any remaining handlers to abort.
 func (s *Server) Stop(ctx context.Context) error {
+	var shutdownErr error
 	if s.server != nil {
-		return s.server.Shutdown(ctx)
+		shutdownErr = s.server.Shutdown(ctx)
 	}
-	return nil
+
+	done := make(chan struct{})
+	go func() {
+		s.wg.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-ctx.Done():
+	}
+
+	if s.cancelBase != nil {
+		s.cancelBase()
+	}
+	return shutdownErr
 }
 
 // authMiddleware verifies the hs_token from the homeserver
@@ -159,8 +198,11 @@ func (s *Server) handleTransaction(w http.ResponseWriter, r *http.Request) {
 
 	log.Printf("Transaction %s contains %d events", txnID, len(txn.Events))
 
-	// Process events
-	ctx := r.Context()
+	// Dispatch events for asynchronous processing. We must ack the
+	// transaction promptly (well under Synapse's ~30s timeout) so that
+	// long-running event handlers (e.g. streaming OpenCode responses)
+	// do not block delivery of subsequent transactions and do not get
+	// their context cancelled mid-stream when the HTTP request ends.
 	for i := range txn.Events {
 		event := &txn.Events[i]
 
@@ -170,11 +212,14 @@ func (s *Server) handleTransaction(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if s.handler != nil {
-			s.handler(ctx, event)
+			s.dispatchEvent(event)
 		}
 	}
 
-	// Mark transaction as processed
+	// Mark transaction as processed. We do this after dispatch (but
+	// before returning 200) so that a homeserver retry caused by a
+	// dropped 200 response is treated as already-handled rather than
+	// reprocessing the same events.
 	s.txnMu.Lock()
 	s.processedTxn[txnID] = true
 	// Cleanup old transactions (keep last 1000)
@@ -192,6 +237,44 @@ func (s *Server) handleTransaction(w http.ResponseWriter, r *http.Request) {
 
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(map[string]interface{}{})
+}
+
+// dispatchEvent runs the user-supplied handler in its own goroutine
+// using the server-lifetime context. Events within the same room are
+// serialized via a chained "tail" channel so ordering is preserved;
+// events in different rooms run in parallel.
+func (s *Server) dispatchEvent(event *Event) {
+	done := make(chan struct{})
+	roomID := event.RoomID
+
+	s.roomMu.Lock()
+	prev := s.roomTails[roomID]
+	s.roomTails[roomID] = done
+	s.roomMu.Unlock()
+
+	s.wg.Add(1)
+	go func() {
+		defer s.wg.Done()
+		defer close(done)
+
+		if prev != nil {
+			select {
+			case <-prev:
+			case <-s.baseCtx.Done():
+				return
+			}
+		}
+
+		s.handler(s.baseCtx, event)
+
+		// If we're still the tail for this room, remove the entry to
+		// avoid unbounded growth of roomTails.
+		s.roomMu.Lock()
+		if s.roomTails[roomID] == done {
+			delete(s.roomTails, roomID)
+		}
+		s.roomMu.Unlock()
+	}()
 }
 
 // handleUserQuery responds to user existence queries
