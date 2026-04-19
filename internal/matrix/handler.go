@@ -52,7 +52,8 @@ type StreamingMessage struct {
 	EventID   string // The message event we're editing
 	Content   strings.Builder
 	LastEdit  time.Time
-	IsLive    bool // Whether the message is still streaming (MSC4357)
+	LastChunk time.Time // When the most recent delta arrived (for idle-timeout safeguard)
+	IsLive    bool      // Whether the message is still streaming (MSC4357)
 }
 
 // NewHandler creates a new event handler
@@ -249,7 +250,14 @@ func (h *Handler) handleOpenCodeMessage(ctx context.Context, roomID, threadID, r
 		h.handleStreamChunk(ctx, sess.OpenCodeSessionID, text)
 	})
 
+	// Idle-timeout safeguard: if deltas have been flowing and then stop with no
+	// terminal session.updated(running=false) event, fall back to closing doneChan
+	// ourselves so the message gets finalized instead of stuck with a ▌ cursor.
+	stopIdleWatcher := make(chan struct{})
+	go h.watchStreamingIdle(sess.OpenCodeSessionID, doneChan, stopIdleWatcher)
+
 	defer func() {
+		close(stopIdleWatcher)
 		h.streamingClient.UnregisterCallback(sess.OpenCodeSessionID)
 		h.streamingMu.Lock()
 		delete(h.streamingMsgs, sess.OpenCodeSessionID)
@@ -323,6 +331,7 @@ func (h *Handler) handleStreamChunk(ctx context.Context, sessionID, text string)
 	}
 
 	streamMsg.Content.WriteString(text)
+	streamMsg.LastChunk = time.Now()
 	currentContent := streamMsg.Content.String()
 	eventID := streamMsg.EventID
 	roomID := streamMsg.RoomID
@@ -363,6 +372,55 @@ func (h *Handler) handleStreamChunk(ctx context.Context, sessionID, text string)
 			sm.LastEdit = time.Now()
 		}
 		h.streamingMu.Unlock()
+	}
+}
+
+// watchStreamingIdle closes doneChan if no new deltas arrive for
+// streamingIdleTimeout after at least one has been received. This guards
+// against a lost terminal session.updated event leaving the message stuck
+// with a ▌ cursor.
+func (h *Handler) watchStreamingIdle(sessionID string, doneChan chan struct{}, stop <-chan struct{}) {
+	const (
+		streamingIdleTimeout = 2 * time.Minute
+		idleCheckInterval    = 15 * time.Second
+	)
+	ticker := time.NewTicker(idleCheckInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-stop:
+			return
+		case <-doneChan:
+			return
+		case <-ticker.C:
+			h.streamingMu.Lock()
+			sm, ok := h.streamingMsgs[sessionID]
+			if !ok {
+				h.streamingMu.Unlock()
+				return
+			}
+			lastChunk := sm.LastChunk
+			h.streamingMu.Unlock()
+
+			if lastChunk.IsZero() {
+				// No deltas yet — don't fire idle timeout before streaming has started.
+				continue
+			}
+			if time.Since(lastChunk) < streamingIdleTimeout {
+				continue
+			}
+
+			log.Printf("Streaming idle timeout for session %s (%.0fs since last delta), forcing completion",
+				sessionID, time.Since(lastChunk).Seconds())
+			select {
+			case <-doneChan:
+				// Already closed by the normal completion path.
+			default:
+				close(doneChan)
+			}
+			return
+		}
 	}
 }
 
